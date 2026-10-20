@@ -8,9 +8,12 @@ import io.homeassistant.companion.android.common.data.servers.ServerManager
 import io.homeassistant.companion.android.common.data.servers.UrlState
 import io.homeassistant.companion.android.common.data.websocket.WebSocketRequest
 import io.homeassistant.companion.android.common.data.websocket.WebSocketState
+import io.homeassistant.companion.android.common.data.websocket.impl.WebSocketConstants.SUBSCRIBE_TYPE_CAMERA_WEBRTC_OFFER
 import io.homeassistant.companion.android.common.data.websocket.impl.WebSocketConstants.SUBSCRIBE_TYPE_SUBSCRIBE_EVENTS
 import io.homeassistant.companion.android.common.data.websocket.impl.entities.MessageSocketResponse
 import io.homeassistant.companion.android.common.data.websocket.impl.entities.StateChangedEvent
+import io.homeassistant.companion.android.common.data.websocket.impl.entities.WebRtcCandidate
+import io.homeassistant.companion.android.common.data.websocket.impl.entities.WebRtcEvent
 import io.homeassistant.companion.android.common.util.MapAnySerializer
 import io.homeassistant.companion.android.common.util.kotlinJsonMapper
 import io.homeassistant.companion.android.database.server.Server
@@ -1134,6 +1137,40 @@ class WebSocketCoreImplTest {
                 assertEquals("light.bed_light", awaitItem().entityId)
                 webSocketListener.onMessage(mockConnection, """{"id":2, "type":"event", "event":{"event_type":"state_changed", "time_fired":"2016-11-26T01:37:24.265429+00:00", "data": {"entity_id":"light.bathroom"}}}""")
                 assertEquals("light.bathroom", awaitItem().entityId)
+            }
+        }
+
+        @Test
+        fun `Given a WebRTC offer subscription When a candidate event arrives Then it is decoded with the WebRTC mapper`() = runTest {
+            setupServer()
+            prepareAuthenticationAnswer()
+            assertTrue(webSocketCore.connect())
+
+            // Message sent by subscribeTo to request for events
+            mockResultSuccessForId(2)
+
+            checkNotNull(
+                webSocketCore.subscribeTo<WebRtcEvent>(
+                    SUBSCRIBE_TYPE_CAMERA_WEBRTC_OFFER,
+                    mapOf("entity_id" to "camera.front_door", "offer" to "v=0 fake offer"),
+                ),
+            ).test {
+                // The candidate uses camelCase keys (sdpMid), which only webRtcJsonMapper keeps; the
+                // shared snake_case mapper would look for sdp_mid and leave the field null.
+                webSocketListener.onMessage(
+                    mockConnection,
+                    """{"id":2, "type":"event", "event":{"type":"candidate", "candidate":{"candidate":"candidate:1 1 UDP 2130706431 192.168.1.2 54400 typ host", "sdpMid":"0", "sdpMLineIndex":0}}}""",
+                )
+                assertEquals(
+                    WebRtcEvent.Candidate(
+                        WebRtcCandidate(
+                            candidate = "candidate:1 1 UDP 2130706431 192.168.1.2 54400 typ host",
+                            sdpMid = "0",
+                            sdpMLineIndex = 0,
+                        ),
+                    ),
+                    awaitItem(),
+                )
             }
         }
 
